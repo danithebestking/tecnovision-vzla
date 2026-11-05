@@ -1,0 +1,8 @@
+name = "tecnovision-vzla"
+compatibility_date = "2025-11-03"
+pages_build_output_dir = "."
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tecnovision-db"
+database_id = "REEMPLAZA_CON_TU_DATABASE_ID"

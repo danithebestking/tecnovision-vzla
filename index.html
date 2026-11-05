@@ -229,16 +229,10 @@
       <div class="admin-card-icon" id="adminCardIcon">🔐</div>
       <h3 id="adminCardTitle">Acceso administrador</h3>
 
-      <!-- Pestañas -->
-      <div class="admin-tabs">
-        <button type="button" class="admin-tab active" id="tabLogin">Ingresar</button>
-        <button type="button" class="admin-tab" id="tabRegister">Registrarme</button>
-      </div>
-
       <!-- Formulario: ingresar -->
       <form id="adminLoginForm" class="adm-form">
         <label class="adm-field">Usuario
-          <input id="adminUser" autocomplete="username" placeholder="tecnovision.vzla" />
+          <input id="adminUser" autocomplete="username" placeholder="tecnovision" />
         </label>
         <label class="adm-field">Contraseña
           <input id="adminPass" type="password" autocomplete="current-password" placeholder="••••••••" />
@@ -247,24 +241,6 @@
         <button type="submit" class="btn btn-primary adm-submit">Ingresar</button>
       </form>
 
-      <!-- Formulario: registrarme -->
-      <form id="adminRegisterForm" class="adm-form" style="display:none">
-        <label class="adm-field">Usuario nuevo
-          <input id="regUser" autocomplete="username" placeholder="mi_usuario" />
-        </label>
-        <label class="adm-field">Contraseña
-          <input id="regPass" type="password" autocomplete="new-password" placeholder="mínimo 4 caracteres" />
-        </label>
-        <label class="adm-field">Repetir contraseña
-          <input id="regPass2" type="password" autocomplete="new-password" placeholder="••••••••" />
-        </label>
-        <label class="adm-field">Palabra de seguridad (opcional)
-          <input id="regHint" placeholder="ej: nombre de mi mascota" />
-        </label>
-        <p class="adm-err" id="adminRegErr"></p>
-        <button type="submit" class="btn btn-primary adm-submit">Crear cuenta</button>
-        <p class="adm-note">Tu cuenta se guarda en este navegador. Podrás cambiarla desde el panel.</p>
-      </form>
     </div>
   </div>
 
@@ -274,7 +250,6 @@
       <div class="admin-head">
         <h3>⚙️ Panel de administración</h3>
         <div class="admin-head-actions">
-          <button class="adm-btn" id="admCredentials" title="Cambiar usuario y contraseña">🔑 Cuenta</button>
           <button class="adm-btn" id="admExport" title="Exportar respaldo JSON del catálogo">📤 JSON</button>
           <button class="adm-btn adm-btn-danger" id="admReset" title="Restablecer catálogo original">♻️</button>
           <button class="adm-btn" id="admLogout" title="Cerrar sesión">🚪</button>
@@ -283,6 +258,20 @@
       </div>
 
       <div class="admin-stats" id="admStats"></div>
+
+      <!-- Gestor de categorías -->
+      <div class="admin-cats">
+        <div class="admin-cats-head">
+          <h4>🏷️ Categorías del catálogo</h4>
+          <p>Agrega categorías personalizadas para usar al crear o editar productos.</p>
+        </div>
+        <div class="admin-cats-form">
+          <input id="admCatLabel" placeholder="Nombre de la categoría (ej. Accesorios)" maxlength="24" />
+          <input id="admCatIcon" placeholder="Emoji (ej. 🔌)" maxlength="4" />
+          <button type="button" class="adm-btn" id="admCatAdd">➕ Agregar categoría</button>
+        </div>
+        <div class="admin-cats-list" id="admCatsList"></div>
+      </div>
 
       <form class="adm-form" id="admForm">
         <h4 id="admFormTitle">➕ Nuevo producto</h4>

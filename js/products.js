@@ -7,7 +7,7 @@
    en app.js con la tasa BCV oficial del día.
    ========================================================= */
 
-const CATEGORIES = [
+const BASE_CATEGORIES = [
   { id: "todos",        label: "Todos",        icon: "🛍️" },
   { id: "tecnologia",   label: "Tecnología",   icon: "💻" },
   { id: "hogar",        label: "Hogar",        icon: "🏠" },
@@ -23,6 +23,41 @@ const CATEGORY_COLORS = {
   audifonos:    "linear-gradient(135deg, #ff2ea6, #8b5cf6)",
   camaras:      "linear-gradient(135deg, #00f0ff, #a855f7)",
 };
+
+function getCustomCategories() {
+  try {
+    return JSON.parse(localStorage.getItem("tvzla_custom_categories") || "[]");
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveCustomCategories(list) {
+  try {
+    localStorage.setItem("tvzla_custom_categories", JSON.stringify(list));
+  } catch (_) {}
+}
+
+let CATEGORIES = BASE_CATEGORIES.slice();
+
+function rebuildCategories() {
+  const custom = getCustomCategories();
+  const base = BASE_CATEGORIES.filter(c => c.id !== "todos");
+  const merged = [
+    BASE_CATEGORIES[0],
+    ...base,
+    ...custom.filter(c => !base.find(b => b.id === c.id) && !c.id || true)
+  ];
+  // asegurar unicidad
+  const seen = new Set();
+  CATEGORIES = merged.filter(c => {
+    if (seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
+  });
+}
+
+rebuildCategories();
 
 const PRODUCTS = [
   /* ---------------- TECNOLOGÍA (7) ---------------- */

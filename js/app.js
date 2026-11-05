@@ -23,9 +23,8 @@ const DEFAULT_BCV_RATE = 881.07;
 const RATE_CACHE_KEY = "tvzla_rate_cache";
 const RATE_CACHE_TTL = 60 * 60 * 1000;
 
-// ---------- Catálogo dinámico (base + ediciones del admin) ----------
-// Versión del catálogo base: al cambiarla se descartan ediciones viejas
-// guardadas en el navegador que ya no correspondan a esta base.
+// ---------- Catálogo dinámico ----------
+// Ahora intenta cargar desde API (base de datos compartida). Fallback a localStorage/PRODUCTS.
 const CATALOG_VERSION = 2;
 const CATALOG_VERSION_KEY = "tvzla_catalog_version";
 
@@ -33,8 +32,6 @@ const CATALOG_VERSION_KEY = "tvzla_catalog_version";
   try {
     const saved = parseInt(localStorage.getItem(CATALOG_VERSION_KEY) || "0", 10);
     if (saved !== CATALOG_VERSION) {
-      // Base nueva: limpiar overrides/agregados/eliminados antiguos
-      // para no arrastrar datos que oculten las imágenes nuevas.
       localStorage.removeItem("tvzla_overrides");
       localStorage.removeItem("tvzla_added");
       localStorage.removeItem("tvzla_deleted");
@@ -50,12 +47,47 @@ const ADMIN_DATA = {
 };
 
 let CATALOG = [];
+let CATALOG_LOADED_FROM_API = false;
 
 function rebuildCatalog() {
+  if (CATALOG_LOADED_FROM_API) return; // Ya cargado desde API
   CATALOG = PRODUCTS
     .filter((p) => !ADMIN_DATA.deleted.includes(p.id))
     .map((p) => Object.assign({}, p, ADMIN_DATA.overrides[p.id] || {}))
     .concat(ADMIN_DATA.added.slice());
+}
+
+async function loadCatalogFromAPI() {
+  try {
+    const res = await fetch("/api/products", { cache: "no-store" });
+    if (!res.ok) throw new Error("API error");
+    const data = await res.json();
+    if (Array.isArray(data.products) && data.products.length > 0) {
+      CATALOG = data.products.map(p => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        price: Number(p.price),
+        oldPrice: p.oldPrice == null ? null : Number(p.oldPrice),
+        rating: p.rating == null ? 4.5 : Number(p.rating),
+        reviews: p.reviews == null ? 0 : Number(p.reviews),
+        icon: p.icon || "📦",
+        badge: p.badge || null,
+        stock: p.stock == null ? 0 : Number(p.stock),
+        image: p.image || null,
+        desc: p.desc || p.description || "Sin descripción."
+      }));
+      CATALOG_LOADED_FROM_API = true;
+      // Actualizar categorías también
+      loadCategoriesFromAPI();
+      renderAll();
+      return true;
+    }
+  } catch (_) {
+    // Fallback a local
+  }
+  rebuildCatalog();
+  return false;
 }
 
 rebuildCatalog();
@@ -270,8 +302,8 @@ function renderProducts() {
   grid.innerHTML = list
     .map(
       (p, i) => `
-      <article class="card" style="animation-delay:${Math.min(i * 30, 300)}ms">
-        <div class="card-media" style="background:${CATEGORY_COLORS[p.category]}">
+      <article class="card" data-card-id="${p.id}" style="animation-delay:${Math.min(i * 30, 300)}ms; cursor:pointer;">
+        <div class="card-media" style="background:${CATEGORY_COLORS[p.category] || "linear-gradient(135deg, #1f2937, #0f1026)"}">
           ${p.badge ? `<span class="badge ${p.badge === "Nuevo" ? "new" : ""}">${p.badge}</span>` : ""}
           <span class="stock-tag">📦 ${p.stock} disp.</span>
           ${mediaHtml(p)}
@@ -296,13 +328,29 @@ function renderProducts() {
     .join("");
 
   grid.querySelectorAll("[data-add]").forEach((btn) =>
-    btn.addEventListener("click", () => addToCart(Number(btn.dataset.add)))
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      addToCart(Number(btn.dataset.add));
+    })
   );
   grid.querySelectorAll("[data-view]").forEach((btn) =>
-    btn.addEventListener("click", () => openModal(Number(btn.dataset.view)))
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openModal(Number(btn.dataset.view));
+    })
   );
   grid.querySelectorAll("[data-edit]").forEach((btn) =>
-    btn.addEventListener("click", () => window.TVAdmin && TVAdmin.openEditor(Number(btn.dataset.edit)))
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.TVAdmin && TVAdmin.openEditor(Number(btn.dataset.edit));
+    })
+  );
+  grid.querySelectorAll(".card").forEach((card) =>
+    card.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      const id = Number(card.dataset.cardId);
+      if (!isNaN(id)) openModal(id);
+    })
   );
 }
 
@@ -581,10 +629,80 @@ function bindEvents() {
   );
 }
 
+async function loadCategoriesFromAPI() {
+  try {
+    const res = await fetch("/api/categories", { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.categories) && typeof saveCustomCategories === "function") {
+      const customs = data.categories.filter(c => c.isCustom || c.is_custom);
+      saveCustomCategories(customs.map(c => ({ id: c.id, label: c.label, icon: c.icon })));
+      if (typeof rebuildCategories === "function") rebuildCategories();
+    }
+  } catch (_) {}
+}
+
 // ---------- API para el panel de administración ----------
 window.TVApp = {
   getCatalog: () => CATALOG,
   getAdminStore: () => ADMIN_DATA,
+  getCategories: () => {
+    if (typeof rebuildCategories === "function") rebuildCategories();
+    return typeof CATEGORIES !== "undefined" ? CATEGORIES : [];
+  },
+  async addCustomCategory(cat) {
+    try {
+      const token = sessionStorage.getItem("tvzla_admin_token");
+      if (token) {
+        const res = await fetch("/api/categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+          body: JSON.stringify(cat)
+        });
+        if (res.ok) {
+          await loadCategoriesFromAPI();
+          if (typeof app === "function" && app().renderAll) app().renderAll();
+          return true;
+        }
+      }
+      if (!cat || !cat.id || !cat.label) return false;
+      const id = String(cat.id).toLowerCase().trim().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+      if (!id) return false;
+      const list = typeof getCustomCategories === "function" ? getCustomCategories() : [];
+      const base = typeof BASE_CATEGORIES !== "undefined" ? BASE_CATEGORIES : [];
+      if (list.find(c => c.id === id) || base.find(b => b.id === id)) return false;
+      list.push({ id, label: String(cat.label).trim(), icon: String(cat.icon || "🏷️").trim().slice(0,4) || "🏷️" });
+      if (typeof saveCustomCategories === "function") saveCustomCategories(list);
+      if (typeof rebuildCategories === "function") rebuildCategories();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+  async removeCustomCategory(id) {
+    try {
+      const token = sessionStorage.getItem("tvzla_admin_token");
+      if (token) {
+        const res = await fetch("/api/categories", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+          body: JSON.stringify({ id })
+        });
+        if (res.ok) {
+          await loadCategoriesFromAPI();
+          if (typeof app === "function" && app().renderAll) app().renderAll();
+          return true;
+        }
+      }
+      const list = typeof getCustomCategories === "function" ? getCustomCategories() : [];
+      const filtered = list.filter(c => c.id !== id);
+      if (typeof saveCustomCategories === "function") saveCustomCategories(filtered);
+      if (typeof rebuildCategories === "function") rebuildCategories();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
   persistAdmin() {
     try {
       localStorage.setItem("tvzla_overrides", JSON.stringify(ADMIN_DATA.overrides));
@@ -597,6 +715,7 @@ window.TVApp = {
     renderAll();
   },
   renderAll() {
+    if (typeof rebuildCategories === "function") rebuildCategories();
     renderCategories();
     renderProducts();
     renderCart();
@@ -609,3 +728,5 @@ renderProducts();
 renderCart();
 bindEvents();
 fetchRate(); // carga tasa BCV (caché o API)
+// Intentar cargar catálogo desde base de datos compartida
+loadCatalogFromAPI();

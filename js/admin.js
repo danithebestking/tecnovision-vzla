@@ -67,7 +67,7 @@
 
   // ---------- Sesión ----------
   function logged() {
-    return sessionStorage.getItem("tvzla_admin") === "1";
+    return sessionStorage.getItem("tvzla_admin") === "1" || sessionStorage.getItem("tvzla_admin_token");
   }
 
   function refreshUI() {
@@ -91,31 +91,17 @@
     setTimeout(() => (isLogin ? $("#adminUser") : $("#regUser")).focus(), 80);
   }
 
-  // Sin cuenta registrada solo se muestra "Registrarme";
-  // al registrarse aparece "Ingresar" (reemplaza al registro).
   function applyTabsVisibility() {
-    const hasAcc = !!getAccount();
-    $("#tabRegister").style.display = hasAcc ? "none" : "";
-    $("#tabLogin").style.display = hasAcc ? "" : "none";
-    // Con una sola pestaña visible, la barra se ve como un título simple
-    $(".admin-tabs").classList.toggle("single", !hasAcc);
+    // Registro deshabilitado: solo inicio de sesión
   }
 
   function openLogin() {
     $("#adminLoginErr").textContent = "";
-    $("#adminRegErr").textContent = "";
     $("#adminUser").value = "";
     $("#adminPass").value = "";
-    $("#regUser").value = "";
-    $("#regPass").value = "";
-    $("#regPass2").value = "";
-    $("#regHint").value = "";
-    const hasAcc = !!getAccount();
-    applyTabsVisibility();
-    showTab(hasAcc ? "login" : "register");
     $("#adminLoginOverlay").classList.add("open");
     document.body.style.overflow = "hidden";
-    setTimeout(() => $("#" + (hasAcc ? "adminUser" : "regUser")).focus(), 80);
+    setTimeout(() => $("#adminUser").focus(), 80);
   }
 
   function closeLogin() {
@@ -131,48 +117,49 @@
       $("#adminLoginErr").textContent = "Escribe usuario y contraseña.";
       return;
     }
+    // Intentar login contra API
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, password: p })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok && data.token) {
+        sessionStorage.setItem("tvzla_admin", "1");
+        sessionStorage.setItem("tvzla_admin_token", data.token);
+        sessionStorage.setItem("tvzla_admin_user", data.user || u);
+        closeLogin();
+        refreshUI();
+        if (typeof app === "function" && app().renderAll) app().renderAll();
+        if (typeof loadCategoriesFromAPI === "function") loadCategoriesFromAPI();
+        welcomeThenPanel();
+        return;
+      }
+      if (data.error) {
+        $("#adminLoginErr").textContent = data.error;
+        $("#adminPass").value = "";
+        return;
+      }
+    } catch (_) {
+      // fallback a local
+    }
     if (await checkCredentials(u, p)) {
       sessionStorage.setItem("tvzla_admin", "1");
       closeLogin();
       refreshUI();
-      app().renderAll(); // refresca tarjetas para mostrar los ✏️
+      if (typeof app === "function" && app().renderAll) app().renderAll();
       welcomeThenPanel();
     } else {
-      $("#adminLoginErr").textContent = getAccount()
-        ? "Usuario o contraseña incorrectos."
-        : "Todavía no hay ninguna cuenta. Usa la pestaña «Registrarme».";
+      $("#adminLoginErr").textContent = "Usuario o contraseña incorrectos.";
       $("#adminPass").value = "";
     }
   }
 
+  // Registro deshabilitado (solo admin fijo)
   async function register(e) {
-    e.preventDefault();
-    const u = $("#regUser").value.trim();
-    const p = $("#regPass").value;
-    const p2 = $("#regPass2").value;
-    const hint = $("#regHint").value.trim();
-
-    if (u.length < 3) { $("#adminRegErr").textContent = "El usuario debe tener al menos 3 caracteres."; return; }
-    if (!/^[A-Za-z0-9._-]+$/.test(u)) { $("#adminRegErr").textContent = "El usuario solo admite letras, números, punto, guion y guion bajo."; return; }
-    if (p.length < 4) { $("#adminRegErr").textContent = "La contraseña debe tener al menos 4 caracteres."; return; }
-    if (p !== p2) { $("#adminRegErr").textContent = "Las contraseñas no coinciden."; return; }
-
-    const acc = getAccount();
-    if (acc && acc.user.toLowerCase() === u.toLowerCase()) {
-      $("#adminRegErr").textContent = "Ese usuario ya existe. Inicia sesión o elige otro.";
-      return;
-    }
-
-    await registerAccount(u, p, hint);
-    $("#adminRegErr").textContent = "";
-    flash(`✅ Cuenta creada: ${u}`);
-    applyTabsVisibility(); // ahora la pestaña pasa a ser "Ingresar"
-    // Iniciar sesión automáticamente
-    sessionStorage.setItem("tvzla_admin", "1");
-    closeLogin();
-    refreshUI();
-    app().renderAll();
-    welcomeThenPanel();
+    if (e && e.preventDefault) e.preventDefault();
+    if ($("#adminRegErr")) $("#adminRegErr").textContent = "Registro deshabilitado.";
   }
 
   // ---------- Animación del CEO (bienvenida y despedida, 6 s) ----------
@@ -233,7 +220,83 @@
   }
 
   function logout() {
+    try {
+      sessionStorage.removeItem("tvzla_admin_token");
+      sessionStorage.removeItem("tvzla_admin_user");
+    } catch (_) {}
     goodbyeThenExit();
+  }
+
+  // ---------- Gestión de categorías ----------
+  function renderAdminCategories() {
+    const listEl = $("#admCatsList");
+    if (!listEl) return;
+    if (typeof rebuildCategories === "function") rebuildCategories();
+    const cats = (window.TVApp && TVApp.getCategories ? TVApp.getCategories() : (typeof CATEGORIES !== "undefined" ? CATEGORIES : []))
+      .filter(c => c.id !== "todos");
+    const custom = typeof getCustomCategories === "function" ? getCustomCategories() : [];
+    if (cats.length === 0) {
+      listEl.innerHTML = '<span class="adm-empty">Sin categorías adicionales.</span>';
+      return;
+    }
+    listEl.innerHTML = cats.map(c => {
+      const isCustom = custom.find(x => x.id === c.id);
+      return `<div class="adm-cat-chip">
+        <span>${c.icon || "🏷️"} ${escapeHtml(c.label)}</span>
+        ${isCustom ? `<button type="button" class="adm-cat-del" data-delcat="${c.id}" title="Eliminar categoría">✕</button>` : `<span class="adm-cat-base" title="Categoría base">Base</span>`}
+      </div>`;
+    }).join("");
+    listEl.querySelectorAll("[data-delcat]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.delcat;
+        if (window.TVApp && TVApp.removeCustomCategory) {
+          TVApp.removeCustomCategory(id);
+        }
+        renderAdminCategories();
+        // actualizar selects
+        if (typeof populateCategorySelect === "function") populateCategorySelect();
+        if (typeof app === "function" && app().renderAll) app().renderAll();
+        flash("Categoría eliminada");
+      });
+    });
+  }
+
+  function addAdminCategory() {
+    const labelEl = $("#admCatLabel");
+    const iconEl = $("#admCatIcon");
+    const label = labelEl ? labelEl.value : "";
+    const icon = iconEl ? iconEl.value : "";
+    if (!label || !label.trim()) {
+      flash("Escribe el nombre de la categoría");
+      return;
+    }
+    const cat = { label: label.trim(), icon: icon.trim() || "🏷️" };
+    if (window.TVApp && TVApp.addCustomCategory) {
+      const ok = TVApp.addCustomCategory(cat);
+      if (!ok) {
+        flash("No se pudo agregar la categoría (ya existe)");
+        return;
+      }
+    }
+    if (labelEl) labelEl.value = "";
+    if (iconEl) iconEl.value = "";
+    renderAdminCategories();
+    if (typeof populateCategorySelect === "function") populateCategorySelect();
+    if (typeof app === "function" && app().renderAll) app().renderAll();
+    flash("Categoría agregada");
+  }
+
+  function populateCategorySelect() {
+    const sel = $("#fCat");
+    if (!sel) return;
+    if (typeof rebuildCategories === "function") rebuildCategories();
+    const cats = (window.TVApp && TVApp.getCategories ? TVApp.getCategories() : (typeof CATEGORIES !== "undefined" ? CATEGORIES : []))
+      .filter(c => c.id !== "todos");
+    const current = sel.value;
+    sel.innerHTML = cats.map(c => `<option value="${c.id}">${c.icon || "🏷️"} ${escapeHtml(c.label)}</option>`).join("");
+    if (cats.find(c => c.id === current)) {
+      sel.value = current;
+    }
   }
 
   // ---------- Panel ----------
@@ -243,6 +306,8 @@
     document.body.style.overflow = "hidden";
     renderStats();
     renderList();
+    renderAdminCategories();
+    populateCategorySelect();
   }
 
   function closePanel() {
@@ -350,7 +415,7 @@
     return ids.length ? Math.max.apply(null, ids) + 1 : 1;
   }
 
-  function saveProduct(e) {
+  async function saveProduct(e) {
     e.preventDefault();
     const name = $("#fName").value.trim();
     const price = parseFloat($("#fPrice").value);
@@ -371,6 +436,40 @@
       desc: $("#fDesc").value.trim() || "Sin descripción.",
       image: pendingImage || null,
     };
+
+    const token = sessionStorage.getItem("tvzla_admin_token");
+    if (token && typeof CATALOG_LOADED_FROM_API !== "undefined" && window.CATALOG_LOADED_FROM_API) {
+      try {
+        if (editingId === null) {
+          const res = await fetch("/api/products", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+            body: JSON.stringify(data)
+          });
+          const jd = await res.json().catch(() => ({}));
+          if (!res.ok) { flash(jd.error || "Error al guardar"); return; }
+          flash(`✅ "${name}" agregado al catálogo`);
+        } else {
+          const res = await fetch("/api/products/" + editingId, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+            body: JSON.stringify(data)
+          });
+          const jd = await res.json().catch(() => ({}));
+          if (!res.ok) { flash(jd.error || "Error al guardar"); return; }
+          flash(`✅ "${name}" actualizado`);
+        }
+        cancelEdit();
+        if (typeof loadCatalogFromAPI === "function") await loadCatalogFromAPI();
+        if (typeof app === "function" && app().renderAll) app().renderAll();
+        renderStats();
+        renderList();
+        return;
+      } catch (err) {
+        flash("Error al guardar en base de datos");
+        return;
+      }
+    }
 
     const store = app().getAdminStore();
 
@@ -393,10 +492,32 @@
     renderStats();
   }
 
-  function removeProduct(id) {
+  async function removeProduct(id) {
     const p = app().getCatalog().find((x) => x.id === id);
     if (!p) return;
     if (!confirm(`¿Eliminar "${p.name}" del catálogo?\n(Puedes restablecer el catálogo después)`)) return;
+
+    const token = sessionStorage.getItem("tvzla_admin_token");
+    if (token && typeof CATALOG_LOADED_FROM_API !== "undefined" && window.CATALOG_LOADED_FROM_API) {
+      try {
+        const res = await fetch("/api/products/" + id, {
+          method: "DELETE",
+          headers: { "Authorization": "Bearer " + token }
+        });
+        const jd = await res.json().catch(() => ({}));
+        if (!res.ok) { flash(jd.error || "Error al eliminar"); return; }
+        if (editingId === id) cancelEdit();
+        if (typeof loadCatalogFromAPI === "function") await loadCatalogFromAPI();
+        if (typeof app === "function" && app().renderAll) app().renderAll();
+        renderStats();
+        renderList();
+        flash("🗑️ Producto eliminado del catálogo");
+        return;
+      } catch (err) {
+        flash("Error al eliminar");
+        return;
+      }
+    }
 
     const store = app().getAdminStore();
     const i = store.added.findIndex((x) => x.id === id);
@@ -516,17 +637,21 @@
   // ---------- Inicio ----------
   function init() {
     // Select de categorías del formulario
-    $("#fCat").innerHTML = CATEGORIES.filter((c) => c.id !== "todos")
-      .map((c) => `<option value="${c.id}">${c.icon} ${c.label}</option>`)
-      .join("");
+    if (typeof populateCategorySelect === "function") {
+      populateCategorySelect();
+    } else if ($("#fCat")) {
+      if (typeof rebuildCategories === "function") rebuildCategories();
+      const cats = (typeof CATEGORIES !== "undefined" ? CATEGORIES : []).filter((c) => c.id !== "todos");
+      $("#fCat").innerHTML = cats.map((c) => `<option value="${c.id}">${c.icon || "🏷️"} ${c.label}</option>`).join("");
+    }
 
-    // Login / Registro
+    // Login
     $("#adminLoginBtn").addEventListener("click", () => (logged() ? openPanel() : openLogin()));
     $("#adminLoginClose").addEventListener("click", closeLogin);
     $("#adminLoginForm").addEventListener("submit", login);
-    $("#adminRegisterForm").addEventListener("submit", register);
-    $("#tabLogin").addEventListener("click", () => showTab("login"));
-    $("#tabRegister").addEventListener("click", () => showTab("register"));
+    if ($("#adminRegisterForm")) $("#adminRegisterForm").addEventListener("submit", register);
+    if ($("#tabLogin")) $("#tabLogin").addEventListener("click", () => {});
+    if ($("#tabRegister")) $("#tabRegister").addEventListener("click", () => {});
     $("#adminLoginOverlay").addEventListener("click", (e) => {
       if (e.target === e.currentTarget) closeLogin();
     });
@@ -537,13 +662,31 @@
     $("#admLogout").addEventListener("click", logout);
     $("#admExport").addEventListener("click", exportJSON);
     $("#admReset").addEventListener("click", resetAll);
-    $("#admCredentials").addEventListener("click", openCred);
+    if ($("#admCredentials")) $("#admCredentials").addEventListener("click", openCred);
 
-    // Cambiar credenciales
-    $("#adminCredClose").addEventListener("click", closeCred);
-    $("#adminCredForm").addEventListener("submit", saveCred);
-    $("#adminCredOverlay").addEventListener("click", (e) => {
+    // Cambiar credenciales (oculto/deshabilitado)
+    if ($("#adminCredClose")) $("#adminCredClose").addEventListener("click", closeCred);
+    if ($("#adminCredForm")) $("#adminCredForm").addEventListener("submit", (e)=>{ e.preventDefault(); flash("Credenciales fijas"); closeCred(); });
+    if ($("#adminCredOverlay")) $("#adminCredOverlay").addEventListener("click", (e) => {
       if (e.target === e.currentTarget) closeCred();
+    });
+
+    // Categorías personalizadas
+    const catAddBtn = $("#admCatAdd");
+    if (catAddBtn) catAddBtn.addEventListener("click", addAdminCategory);
+    const catLabelIn = $("#admCatLabel");
+    if (catLabelIn) catLabelIn.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addAdminCategory();
+      }
+    });
+    const catIconIn = $("#admCatIcon");
+    if (catIconIn) catIconIn.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addAdminCategory();
+      }
     });
 
     // Formulario
